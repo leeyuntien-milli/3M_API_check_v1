@@ -70,8 +70,6 @@ def convert_format_to_csv(input_file: str,
         file_out.write('\n'.join(result))
     return (result if return_lines else None)
 
-
-
 def generate_gpcs_auth_token(
     cert_basedir: str,
     cert_basename: str,
@@ -135,13 +133,43 @@ def claims_file_to_list(input_file: str,
     claim_lines: List[str] = list()
     with open(input_file, 'r') as file_in:
         claim_lines = file_in.readlines()
-    result = [
-        claim
-        for claim in claim_lines
-    ]
-    return [dict()]
+    result: List[dict] = [dict()]
+    if input_format == 'A':
+        result = [
+            {
+                'patientId': claim[0],
+                'claimId': claim[1],
+                'admitDate': claim[2],
+                'dischargeDate': claim[3],
+                'dischargeStatus': claim[4],
+                'birthDate': claim[5],
+                'ageInYears': int(claim[6]),
+                'sex': claim[7],
+                'diagnosisList': [
+                    {'code': claim[i]} | (
+                        {'poa': claim[i + 50]} if claim[i + 50] else dict()
+                    )
+                    for i in range(9, 59)
+                    if claim[i]
+                ],
+                'icdVersionQualifier': claim[160][0]
+            } | (
+                {'admitDiagnosis': claim[8]} if claim[8] else dict()
+            ) | (
+                {
+                    'procedureList': [
+                        {'code': claim[i]}
+                        for i in range(109, 159)
+                        if claim[i]
+                    ]
+                } if claim[109] else dict()
+            )
+            for claim_str in claim_lines
+            for claim in [claim_str.split(',')]
+        ]
+    return result
 
-def get_gpcs_claims_result(
+def get_gpcs_result(
     access_token: str,
     claims_list: List[dict],
     content_version: str = '2022.2.1',
@@ -150,7 +178,7 @@ def get_gpcs_claims_result(
     sub_requests: int = 1,
     claims_per_sub_request: Optional[int] = None,
     timeout_seconds: int = 60
-) -> str:
+) -> dict:
     """Gets claim grouping results from the 3M gpcs remote API.
 
     Retrieves 3M gpcs claim grouping results for a a list of claims.
@@ -232,4 +260,61 @@ def get_gpcs_claims_result(
             gpcs_response.content
         )
 
-    return json.dumps(gpcs_response.json())
+    return gpcs_response.json()
+
+
+def format_json_to_text(
+    json_input: dict,
+    output_format: str,
+    output_file: Optional[str]
+) -> Optional[List[str]]:
+    lines: List[str] = list()
+    if output_format == 'A':
+        lines = [
+            ','.join([
+                claim_out['fields']['patientIdUsed'],
+                claim_out['fields']['claimId'],
+                claim_out['fields']['drg'],
+                claim_out['fields']['returnCode'],
+                claim_out['fields']['soi'],
+                claim_out['fields']['rom']
+            ])
+            for resp in json_input['responseList']
+            for claim_out in resp['claimOutputList']
+        ]
+    result: Optional[List[str]] = None if output_file else lines
+    return result
+
+
+def get_gpcs_result_for_file(
+    input_file: str,
+    input_format: str,
+    output_format: str,
+    cert_basedir: str,
+    cert_basename: str,
+    auth_duration_minutes: int = 5,
+    content_version: str = '2022.2.1',
+    grouper_type: str = 'APR',
+    grouper_version: str = '390',
+    sub_requests: int = 1,
+    claims_per_sub_request: Optional[int] = None,
+    timeout_seconds: int = 60
+):
+    auth_token: str = generate_gpcs_auth_token(
+        cert_basedir=cert_basedir,
+        cert_basename=cert_basename,
+        duration_minutes=auth_duration_minutes
+    )
+    access_token: str = get_gpcs_oath_access_token(auth_token)
+    claims_list: List[dict] = claims_file_to_list(input_file, input_format)
+    result: dict = get_gpcs_result(
+        access_token=access_token,
+        claims_list=claims_list,
+        content_version=content_version,
+        grouper_type=grouper_type,
+        grouper_version=grouper_version,
+        sub_requests=sub_requests,
+        claims_per_sub_request=claims_per_sub_request,
+        timeout_seconds=timeout_seconds
+    )
+    return result

@@ -15,8 +15,11 @@ from cryptography.hazmat.primitives import hashes
 
 
 def createAuthToken():
-    private_key_path = '[path to cert][certname]_key.pem'
-    public_key_path = '[path to cert][certname]_cert.pem'
+    keypath = ('C:/Users/andrew.gustafson/Desktop/3M_Grouper_API/cert/'
+               '2420151_SiteCoversAllMillimanSharedDataSources_Cert/PEM/')
+    certname = '2420151_SiteCoversAllMillimanSharedDataSources_Cert'
+    private_key_path = keypath + certname + '_key.pem'
+    public_key_path = keypath + certname + '_cert.pem'
     public_key_file = open(public_key_path, mode='rb')
     public_key = public_key_file.read()
     private_key_file = open(private_key_path, mode='rb')
