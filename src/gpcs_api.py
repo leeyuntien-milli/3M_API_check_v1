@@ -57,10 +57,17 @@ def convert_format_to_csv(input_file: str,
             end_start + 2
         ]
         blim: int = len(boundaries) - 1
+        date_indices: Set[int] = {
+            2,
+            3,
+            5
+        }
         result = [
             ','.join([
-                line[boundaries[i]:boundaries[i+1]].strip()
+                ('-'.join([lline[-4:], lline[:2], lline[3:5]])
+                 if i in date_indices else lline)
                 for i in range(0, blim)
+                for lline in [line[boundaries[i]:boundaries[i+1]].strip()]
             ])
             for line in flines
         ]
@@ -139,10 +146,10 @@ def claims_file_to_list(input_file: str,
             {
                 'patientId': claim[0],
                 'claimId': claim[1],
-                'admitDate': claim[2],
-                'dischargeDate': claim[3],
+                'admitDate': claim[2].replace('/', ''),
+                'dischargeDate': claim[3].replace('/', ''),
                 'dischargeStatus': claim[4],
-                'birthDate': claim[5],
+                'birthDate': claim[5].replace('/', ''),
                 'ageInYears': int(claim[6]),
                 'sex': claim[7],
                 'diagnosisList': [
@@ -175,6 +182,7 @@ def get_gpcs_result(
     content_version: str = '2022.2.1',
     grouper_type: str = 'APR',
     grouper_version: str = '390',
+    disable_hac: Optional[str] = '1',
     sub_requests: int = 1,
     claims_per_sub_request: Optional[int] = None,
     timeout_seconds: int = 60
@@ -216,7 +224,7 @@ def get_gpcs_result(
         'timeout_seconds is not an int or is less than 1.'
     if not claims_list:
         print('Empty claims_list, nothing to process.')
-        return ''
+        return dict()
 
     gpcs_claims_url: str = (
         'https://gpcs.3m.com/Gpcs/rest/' + content_version + '/claims/process'
@@ -237,7 +245,10 @@ def get_gpcs_result(
         'contentVersion': content_version,
         'grouperType': grouper_type,
         'grouperVersion': grouper_version
-    }
+    } | (
+        {'disableHac': disable_hac} if disable_hac else dict()
+    )
+    print(processing_options)
     request_list: List[dict] = [
         {
             'claimInputList': claims_list[i:i + claims_per_subrequest_count],
@@ -263,7 +274,7 @@ def get_gpcs_result(
     return gpcs_response.json()
 
 
-def format_json_to_text(
+def json_subset_to_text(
     json_input: dict,
     output_format: str,
     output_file: Optional[str]
@@ -282,7 +293,12 @@ def format_json_to_text(
             for resp in json_input['responseList']
             for claim_out in resp['claimOutputList']
         ]
-    result: Optional[List[str]] = None if output_file else lines
+    result: Optional[List[str]] = None
+    if output_file:
+        with open(output_file, 'w') as file_out:
+            file_out.write('\n'.join(lines))
+    else:
+        result = lines
     return result
 
 
