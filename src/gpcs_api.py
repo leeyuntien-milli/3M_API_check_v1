@@ -2,12 +2,22 @@ import base64
 import datetime
 import json
 import math
+from collections import OrderedDict
+from re import A
 import uuid
 from typing import Dict, List, Optional, Set, Tuple
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 import jwt
 import requests
+
+def get_format_for_usecase(
+    usecase: str
+):
+    result = OrderedDict()
+    if usecase == 'A':
+        result['patientId'] = 0
+    return result
 
 def convert_format_to_csv(input_file: str,
                           output_file: str,
@@ -146,10 +156,10 @@ def claims_file_to_list(input_file: str,
             {
                 'patientId': claim[0],
                 'claimId': claim[1],
-                'admitDate': claim[2].replace('/', ''),
-                'dischargeDate': claim[3].replace('/', ''),
+                'admitDate': claim[2],
+                'dischargeDate': claim[3],
                 'dischargeStatus': claim[4],
-                'birthDate': claim[5].replace('/', ''),
+                'birthDate': claim[5],
                 'ageInYears': int(claim[6]),
                 'sex': claim[7],
                 'diagnosisList': [
@@ -218,7 +228,7 @@ def get_gpcs_result(
     assert isinstance(sub_requests, int) and (sub_requests > 0), \
         'sub_requests is not an int or is less than 1.'
     assert isinstance(claims_per_sub_request, type(None)) or \
-        (isinstance(claims_per_sub_request, int) and 
+        (isinstance(claims_per_sub_request, int) and
          (claims_per_sub_request > 0)), 'claims_per sub_request invalid value.'
     assert isinstance(timeout_seconds, int) and (timeout_seconds > 0), \
         'timeout_seconds is not an int or is less than 1.'
@@ -334,3 +344,176 @@ def get_gpcs_result_for_file(
         timeout_seconds=timeout_seconds
     )
     return result
+
+def build_struct_array_null_filter_subquery(
+    field_names: List[str],
+    field_count: int,
+    filter_field_index: int = 0,
+    indent: str = '',
+    field_types: Optional[List[str]] = None
+) -> str:
+    fnames_count: int = len(field_names)
+    assert (filter_field_index > -1) and (filter_field_index < fnames_count),\
+        'filter_field_index out of range error.'
+    if (field_count < 1) or (
+        field_types and (len(field_types) != fnames_count)
+    ):
+        return ''
+    struct_type: str = (
+        'STRUCT<' + (
+            ', '.join([
+                field_names[i] + ': ' + field_types[i]
+                for i in range(fnames_count)
+            ])
+            if field_types else
+            ': STRING, '.join(field_names) + ': STRING'
+         ) + '>'
+    )
+    delim: str = ',\n    ' + indent
+    field_lim: int = field_count + 1
+    query: str = (
+        indent + 'FILTER(\n  ' + indent +
+        'ARRAY(\n    ' + indent +
+        delim.join([
+            'CAST((' +
+            ','.join([
+                fname + str(i)
+                for fname in field_names
+            ]) +
+            ') AS ' + struct_type + ')'
+            for i in range(1, field_lim)
+        ]) +
+        '\n  ' + indent + ')' +
+        ',\n  ' + indent +
+        'x -> x.' + field_names[filter_field_index] + ' IS NOT NULL' +
+        '\n' + indent + ')'
+    )
+    return query
+
+def build_array_null_filter_subquery(
+    field_name: str,
+    field_count: int,
+    indent: str = '',
+    cast_to: str = 'STRING',
+) -> str:
+    if field_count < 1:
+        return ''
+    delim: str = ',\n    ' + indent
+    field_lim: int = field_count + 1
+    query: str = (
+        indent + 'FILTER(\n  ' + indent +
+        'ARRAY(\n    ' + indent +
+        delim.join([
+            'CAST(' + field_name + str(i) + ' AS ' + cast_to + ')'
+            for i in range(1, field_lim)
+        ]) +
+        '\n' + indent + '  ),\n' +
+        indent + '  x -> x IS NOT NULL\n' +
+        indent + ')'
+    )
+    return query
+
+def build_collect_list_subquery(
+    fields_dict: Dict[str, str],
+    diag_code_count: int,
+    diag_poas: bool,
+    procedure_count: int,
+    indent: str = '',
+    include_patientId: bool = True
+) -> str:
+    delim1: str = ',\n  ' + indent
+    query: str = (
+        indent + 'collect_list(named_struct(\n' +
+        (indent + "  'patientId', CAST(t2.patientId AS STRING)" + delim1
+         if include_patientId else '') +
+        delim1.join([
+            "'" + item[0] + "', CAST(" + item[0] + ' AS ' + item[1] +')'
+            for item in fields_dict.items()
+        ]) + (
+            delim1 + "'diagnosisCodes'," +
+            build_array_null_filter_subquery(
+                'diagnosisCode',
+                diag_code_count
+            )
+            if diag_code_count > 0 else ''
+        ) + (
+            delim1 + "'procedures'," +
+            build_array_null_filter_subquery(
+                'procedure',
+                procedure_count
+            )
+            if procedure_count > 0 else ''
+        )
+    )
+    return query
+
+def build_grouped_dataframe_query(
+    table_name: str,
+    group_count: int,
+    input_format: str = 'A',
+    patient_id_column: str = 'patientId'
+):
+    fields: Dict[str, str] = dict()
+    diag_code_count: int = 0
+    diag_poas: bool = False
+    procedure_count: int = 0
+    if input_format == 'A':
+        diag_code_count = 50
+        diag_poas = True
+        procedure_count = 50
+        fields = {
+            'claimId': 'STRING',
+            'admitDate': 'STRING',
+            'dischargeDate': 'STRING',
+            'dischargeStatus': 'STRING',
+            'birthDate': 'STRING',
+            'ageInYears': 'INT',
+            'sex': 'STRING',
+            'admitDiagnosis': 'STRING'
+        }
+    ident: str = ',\n                '
+    diag_query: str = ''
+    collect_query: str = """
+          collect_list(named_struct(
+              'patientId', CAST(t2.patientId AS STRING),
+              """ + ',\n              '.join([
+                  ("'" + item[0] + "', CAST(" +
+                   item[0] + ' AS ' + item[1] + ')')
+                  for item in fields.items()
+               ]) + (
+                ident + "'diagnosisCodes', (\n" + diag_query
+                if diag_code_count > 0 else ''
+               ) + """)
+          ))
+    """
+    df_grouped_query = """
+        SELECT
+          Group_Index,""" + collect_query + """
+        FROM
+          """ + table_name + """ t1
+        INNER JOIN (
+          SELECT
+            patientId,
+            ROUND(""" + str(group_count) + """*RAND()) AS Group_Index
+          FROM (
+            SELECT
+                DISTINCT """ + patient_id_column + """ AS patientId
+            FROM
+                """ + table_name + """
+          )
+        ) t2
+        ON t1.""" + patient_id_column + """ = t2.patientId
+        GROUP BY
+          Group_Index
+    """
+    return df_grouped_query
+
+def get_gpcs_results_for_table(
+    spark,
+    table_name: str,
+    members_per_request: int
+):
+    df_grouped = spark.sql("""
+
+    """)
+    return
