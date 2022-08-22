@@ -513,37 +513,37 @@ def build_grouped_dataframe_query(
     return df_grouped_query
 
 def grouped_data_to_json(partition_data):
-  for row in partition_data:
-    request_list = [
-      {
-        'patientId': entry['patientId'],
-        'claimId': entry['claimId'],
-        'admitDate': entry['admitDate'],
-        'dischargeDate': entry['dischargeDate'],
-        'birthDate': entry['birthDate'],
-        'ageInYears': int(entry['ageInYears']),
-        'sex': entry['sex'],
-        #'icdVersionQualifier': entry['icdVersionQualifier']
-        'diagnosisList': [
-          {'code': code.diagnosisCode} | (
-            {'poa': code.diagnosisPOA}
-            if code.diagnosisPOA else dict()
-          )
-          for code in entry['diagnosisCodes']
-          if code.diagnosisCode
+    for row in partition_data:
+        request_list: List[dict] = [
+            {
+                'patientId': entry['patientId'],
+                'claimId': entry['claimId'],
+                'admitDate': entry['admitDate'],
+                'dischargeDate': entry['dischargeDate'],
+                'birthDate': entry['birthDate'],
+                'ageInYears': int(entry['ageInYears']),
+                'sex': entry['sex'],
+                #'icdVersionQualifier': entry['icdVersionQualifier']
+                'diagnosisList': [
+                {'code': code.diagnosisCode} | (
+                    {'poa': code.diagnosisPOA}
+                    if code.diagnosisPOA else dict()
+                )
+                for code in entry['diagnosisCodes']
+                if code.diagnosisCode
+                ]
+            } | (
+                {
+                'procedureList': [
+                    {'code': procedure}
+                    for procedure in entry['procedures']
+                ]
+                }
+                if entry['procedures'] else dict()
+            ) | (
+                {'admitDiagnosis': entry['admitDiagnosis']}
+                if entry['admitDiagnosis'] else dict()
+            )
+            for entry in row['Data']
         ]
-      } | (
-        {
-          'procedureList': [
-            {'code': procedure}
-            for procedure in entry['procedures']
-          ]
-        }
-        if entry['procedures'] else dict()
-      ) | (
-        {'admitDiagnosis': entry['admitDiagnosis']}
-        if entry['admitDiagnosis'] else dict()
-      )
-      for entry in row['Data']
-    ]
-    yield [json.dumps({'requestList': request_list})]
+        yield [json.dumps({'requestList': request_list})]
