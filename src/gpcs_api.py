@@ -376,7 +376,7 @@ def build_struct_array_null_filter_subquery(
         'ARRAY(\n    ' + indent +
         delim.join([
             'CAST((' +
-            ','.join([
+            ', '.join([
                 fname + str(i)
                 for fname in field_names
             ]) +
@@ -422,6 +422,7 @@ def build_collect_list_subquery(
     include_patientId: bool = True
 ) -> str:
     delim1: str = ',\n  ' + indent
+    subquery_indent: str = indent + '  '
     query: str = (
         indent + 'collect_list(named_struct(\n' +
         (indent + "  'patientId', CAST(t2.patientId AS STRING)" + delim1
@@ -430,20 +431,32 @@ def build_collect_list_subquery(
             "'" + item[0] + "', CAST(" + item[0] + ' AS ' + item[1] +')'
             for item in fields_dict.items()
         ]) + (
-            delim1 + "'diagnosisCodes'," +
-            build_array_null_filter_subquery(
-                'diagnosisCode',
-                diag_code_count
+            delim1 + "'diagnosisCodes'," + (
+                (
+                    build_struct_array_null_filter_subquery(
+                        field_names=['diagnosisCode', 'diagnosisPOA'],
+                        field_count=diag_code_count,
+                        indent=subquery_indent
+                    )
+                ) if diag_poas else (
+                    build_array_null_filter_subquery(
+                        field_name='diagnosisCode',
+                        field_count=diag_code_count,
+                        indent=subquery_indent
+                    )
+                )
             )
             if diag_code_count > 0 else ''
         ) + (
             delim1 + "'procedures'," +
             build_array_null_filter_subquery(
-                'procedure',
-                procedure_count
+                field_name='procedure',
+                field_count=procedure_count,
+                indent=subquery_indent
             )
             if procedure_count > 0 else ''
-        )
+        ) +
+        indent + '))'
     )
     return query
 
@@ -471,24 +484,15 @@ def build_grouped_dataframe_query(
             'sex': 'STRING',
             'admitDiagnosis': 'STRING'
         }
-    ident: str = ',\n                '
-    diag_query: str = ''
-    collect_query: str = """
-          collect_list(named_struct(
-              'patientId', CAST(t2.patientId AS STRING),
-              """ + ',\n              '.join([
-                  ("'" + item[0] + "', CAST(" +
-                   item[0] + ' AS ' + item[1] + ')')
-                  for item in fields.items()
-               ]) + (
-                ident + "'diagnosisCodes', (\n" + diag_query
-                if diag_code_count > 0 else ''
-               ) + """)
-          ))
-    """
+    collect_query: str = build_collect_list_subquery(
+        fields_dict=fields,
+        diag_code_count=diag_code_count,
+        diag_poas=diag_poas,
+        procedure_count=procedure_count
+    )
     df_grouped_query = """
         SELECT
-          Group_Index,""" + collect_query + """
+          Group_Index,\n""" + collect_query + """ AS Data
         FROM
           """ + table_name + """ t1
         INNER JOIN (
@@ -508,12 +512,38 @@ def build_grouped_dataframe_query(
     """
     return df_grouped_query
 
-def get_gpcs_results_for_table(
-    spark,
-    table_name: str,
-    members_per_request: int
-):
-    df_grouped = spark.sql("""
-
-    """)
-    return
+def grouped_data_to_json(partition_data):
+  for row in partition_data:
+    request_list = [
+      {
+        'patientId': entry['patientId'],
+        'claimId': entry['claimId'],
+        'admitDate': entry['admitDate'],
+        'dischargeDate': entry['dischargeDate'],
+        'birthDate': entry['birthDate'],
+        'ageInYears': int(entry['ageInYears']),
+        'sex': entry['sex'],
+        #'icdVersionQualifier': entry['icdVersionQualifier']
+        'diagnosisList': [
+          {'code': code.diagnosisCode} | (
+            {'poa': code.diagnosisPOA}
+            if code.diagnosisPOA else dict()
+          )
+          for code in entry['diagnosisCodes']
+          if code.diagnosisCode
+        ]
+      } | (
+        {
+          'procedureList': [
+            {'code': procedure}
+            for procedure in entry['procedures']
+          ]
+        }
+        if entry['procedures'] else dict()
+      ) | (
+        {'admitDiagnosis': entry['admitDiagnosis']}
+        if entry['admitDiagnosis'] else dict()
+      )
+      for entry in row['Data']
+    ]
+    yield [json.dumps({'requestList': request_list})]
