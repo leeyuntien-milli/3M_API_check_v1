@@ -2,90 +2,178 @@ import base64
 import datetime
 import json
 import math
-from collections import OrderedDict
-from re import A
 import uuid
+from collections import OrderedDict
+from itertools import islice
 from typing import Dict, List, Optional, Set, Tuple
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes
 import jwt
 import requests
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+from pyspark.sql.types import StringType, StructField, StructType
 
-def get_format_for_usecase(
-    usecase: str
-):
-    result = OrderedDict()
-    if usecase == 'A':
-        result['patientId'] = 0
-    return result
+
+def get_format_for_usecase(usecase: str) -> Optional[dict]:
+    format_dict: Optional[dict] = None
+    field_info: Tuple[str, str, str] = (
+        'type',
+        'nullable',
+        'text_left_col'
+    )
+    if usecase == 'HRT_CaseA':
+        diagnosis_code_count: int = 50
+        diagnosis_code_lim: int = diagnosis_code_count + 1
+        diagnosis_width: int = 8
+        diagnosis_start: int = 94
+        diagnosis_poa_width: int = 1
+        diagnosis_poa_start: int = (
+            diagnosis_start + diagnosis_width*diagnosis_code_count
+        )
+        procedure_count: int = 50
+        procedure_lim: int = procedure_count + 1
+        procedure_width: int = 7
+        procedure_start: int = (
+            diagnosis_poa_start + diagnosis_poa_width*diagnosis_code_count
+        )
+        end_start: int = procedure_start + procedure_width*procedure_count
+        format_dict = {
+            'input_fields': OrderedDict(
+                [
+                    ('patientId', dict(zip(
+                        field_info,
+                        ('STRING', False, 0)
+                    ))),
+                    ('claimId', dict(zip(
+                        field_info,
+                        ('STRING', False, 40)
+                    ))),
+                    ('admitDate', dict(zip(
+                        field_info,
+                        ('STRING', True, 50)
+                    ))),
+                    ('dischargeDate', dict(zip(
+                        field_info,
+                        ('STRING', True, 60)
+                    ))),
+                    ('dischargeStatus', dict(zip(
+                        field_info,
+                        ('STRING', True, 70)
+                    ))),
+                    ('birthDate', dict(zip(
+                        field_info,
+                        ('STRING', True, 72)
+                    ))),
+                    ('ageInYears', dict(zip(
+                        field_info,
+                        ('INT', True, 82)
+                    ))),
+                    ('sex', dict(zip(
+                        field_info,
+                        ('STRING', True, 85)
+                    ))),
+                    ('admitDiagnosis', dict(zip(
+                        field_info,
+                        ('STRING', True, 86)
+                    ))),
+                    ('diagnosisCode1', dict(zip(
+                        field_info,
+                        ('STRING', False, diagnosis_start)
+                    )))
+                ] + [
+                    ('diagnosisCode' + str(i), dict(zip(
+                        field_info,
+                        (
+                            'STRING',
+                            True,
+                            diagnosis_start + diagnosis_width*(i - 1)
+                        )
+                    )))
+                    for i in range(2, diagnosis_code_lim)
+                ] + [
+                    ('diagnosisPOA' + str(i), dict(zip(
+                        field_info,
+                        (
+                            'STRING',
+                            True,
+                            diagnosis_poa_start + diagnosis_poa_width*(i - 1)
+                        )
+                    )))
+                    for i in range(1, diagnosis_code_lim)
+                ] + [
+                    ('procedure' + str(i), dict(zip(
+                        field_info,
+                        (
+                            'STRING',
+                            True,
+                            procedure_start + procedure_width*(i - 1)
+                        )
+                    )))
+                    for i in range(1, procedure_lim)
+                ] + [
+                    ('disableHac', dict(zip(
+                        field_info,
+                        ('STRING', False, end_start)
+                    ))),
+                    ('icdVersionQualifier', dict(zip(
+                        field_info,
+                        ('STRING', False, end_start + 1)
+                    )))
+                ]
+            ),
+            'diagnosis_code_count': diagnosis_code_count,
+            'diagnosis_poas': True,
+            'procedure_count': procedure_count,
+            'date_convert_fields': {'admitDate', 'dischargeDate', 'birthDate'},
+            'line_final_boundary': end_start + 2
+        }
+    return format_dict
+
+def get_schema_for_usecase(usecase: str) -> Optional[StructType]:
+    format_dict: Optional[dict] = get_format_for_usecase(usecase)
+    schema: Optional[StructType] = None
+    if format_dict:
+        schema = StructType([
+            StructField(item[0], StringType(), item[1]['nullable'])
+            for item in (format_dict['input_fields']).items()
+        ])
+    else:
+        print('Unknown usecase.')
+    return schema
 
 def convert_format_to_csv(input_file: str,
                           output_file: str,
-                          input_format: str = 'A',
-                          return_lines: bool = False) -> Optional[List[str]]:
-    flines: List[str] = list()
+                          usecase: str,
+                          lines_chunk: int = 1024) -> None:
+    format_dict: Optional[dict] = get_format_for_usecase(usecase)
+    if not format_dict:
+        print('Unknown usecase.')
+        return
+    bounds: List[int] = [
+        entry['text_left_col']
+        for entry in format_dict['input_fields'].values()
+    ] + [format_dict['line_final_boundary']]
+    blim: int = len(bounds) - 1
+    date_convert_indices: Set[int] = {
+        i for i, key in enumerate(format_dict['input_fields'])
+        if key in format_dict['date_convert_fields']
+    }
     with open(input_file, 'r') as file_in:
-        flines = file_in.readlines()
-    result: List[str] = list()
-    if input_format == 'A':
-        diagnosis_width: int = 8
-        diagnosis_start: int = 94
-        diagnosis_count: int = 50
-        diagnosis_poa_width: int = 1
-        diagnosis_poa_start: int = (
-            diagnosis_start + diagnosis_width*diagnosis_count
-        )
-        diagnosis_poa_count: int = 50
-        procedure_width: int = 7
-        procedure_start: int = (
-            diagnosis_poa_start + diagnosis_poa_width*diagnosis_poa_count
-        )
-        procedure_count: int = 50
-        end_start: int = procedure_start + procedure_width*procedure_count
-        boundaries: List[int] = [
-            0,
-            40,
-            50,
-            60,
-            70,
-            72,
-            82,
-            85,
-            86
-        ] + [
-            diagnosis_start + diagnosis_width*i
-            for i in range(diagnosis_count)
-        ] + [
-            diagnosis_poa_start + diagnosis_poa_width*i
-            for i in range(diagnosis_poa_count)
-        ] + [
-            procedure_start + procedure_width*i
-            for i in range(procedure_count)
-        ] + [
-            end_start,
-            end_start + 1,
-            end_start + 2
-        ]
-        blim: int = len(boundaries) - 1
-        date_indices: Set[int] = {
-            2,
-            3,
-            5
-        }
-        result = [
-            ','.join([
-                ('-'.join([lline[-4:], lline[:2], lline[3:5]])
-                 if i in date_indices else lline)
-                for i in range(0, blim)
-                for lline in [line[boundaries[i]:boundaries[i+1]].strip()]
-            ])
-            for line in flines
-        ]
-    else:
-        print('Unknown input_format.')
-    with open(output_file, 'w') as file_out:
-        file_out.write('\n'.join(result))
-    return (result if return_lines else None)
+        with open(output_file, 'w') as file_out:
+            while True:
+                flines = islice(file_in, lines_chunk)
+                result: List[str] = [
+                    ','.join([
+                        ('-'.join([lline[-4:], lline[:2], lline[3:5]])
+                        if i in date_convert_indices else lline)
+                        for i in range(0, blim)
+                        for lline in [line[bounds[i]:bounds[i+1]].strip()]
+                    ])
+                    for line in flines
+                ]
+                if not result:
+                    break
+                file_out.write('\n'.join(result))
+    return
 
 def generate_gpcs_auth_token(
     cert_basedir: str,
