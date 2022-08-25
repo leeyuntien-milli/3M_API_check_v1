@@ -49,11 +49,11 @@ def get_format_for_usecase(usecase: str) -> Optional[dict]:
                     ))),
                     ('admitDate', dict(zip(
                         field_info,
-                        ('STRING', True, 50)
+                        ('STRING', False, 50)
                     ))),
                     ('dischargeDate', dict(zip(
                         field_info,
-                        ('STRING', True, 60)
+                        ('STRING', False, 60)
                     ))),
                     ('dischargeStatus', dict(zip(
                         field_info,
@@ -65,11 +65,11 @@ def get_format_for_usecase(usecase: str) -> Optional[dict]:
                     ))),
                     ('ageInYears', dict(zip(
                         field_info,
-                        ('INT', True, 82)
+                        ('INT', False, 82)
                     ))),
                     ('sex', dict(zip(
                         field_info,
-                        ('STRING', True, 85)
+                        ('STRING', False, 85)
                     ))),
                     ('admitDiagnosis', dict(zip(
                         field_info,
@@ -172,27 +172,14 @@ def convert_format_to_csv(input_file: str,
                 ]
                 if not result:
                     break
-                file_out.write('\n'.join(result))
+                file_out.write('\n'.join(result) + '\n')
     return
 
 def generate_gpcs_auth_token(
-    cert_basedir: str,
-    cert_basename: str,
+    public_key: bytes,
+    private_key: bytes,
     duration_minutes: int
 ) -> str:
-    private_key_file = open(
-        cert_basedir + '/' + cert_basename + '_key.pem',
-        mode='rb'
-    )
-    private_key = private_key_file.read()
-    private_key_file.close()
-    public_key_file = open(
-        cert_basedir + '/' + cert_basename + '_cert.pem',
-        mode='rb'
-    )
-    public_key = public_key_file.read()
-    public_key_file.close()
-
     cert = x509.load_pem_x509_certificate(public_key)
     fingerprint = cert.fingerprint(hashes.SHA1())
     kid = fingerprint.hex()
@@ -210,13 +197,33 @@ def generate_gpcs_auth_token(
         'x5t' : x5t,
         'kid' : kid
     }
-    auth_token = jwt.encode(
+    auth_token: str = jwt.encode(
         payload,
         private_key,
         algorithm='RS256',
         headers=headers
     )
 
+    return auth_token
+
+def generate_gpcs_auth_token_from_cert_files(
+    cert_basedir: str,
+    cert_basename: str,
+    duration_minutes: int
+) -> str:
+    cert_prefix: str = cert_basedir + '/' + cert_basename
+    private_key: bytes = bytes()
+    public_key: bytes = bytes()
+    with open(cert_prefix + '_key.pem', mode='rb') as private_key_file:
+        private_key = private_key_file.read()
+    with open(cert_prefix + '_cert.pem', mode='rb') as public_key_file:
+        public_key = public_key_file.read()
+
+    auth_token: str = generate_gpcs_auth_token(
+        public_key,
+        private_key,
+        duration_minutes
+    )
     return auth_token
 
 def get_gpcs_oath_access_token(auth_token: str) -> str:
@@ -414,7 +421,7 @@ def get_gpcs_result_for_file(
     claims_per_sub_request: Optional[int] = None,
     timeout_seconds: int = 60
 ):
-    auth_token: str = generate_gpcs_auth_token(
+    auth_token: str = generate_gpcs_auth_token_from_cert_files(
         cert_basedir=cert_basedir,
         cert_basename=cert_basename,
         duration_minutes=auth_duration_minutes
