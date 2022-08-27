@@ -10,6 +10,7 @@ import jwt
 import requests
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.types import StringType, StructField, StructType
 
 
@@ -61,7 +62,7 @@ def get_format_for_usecase(usecase: str) -> Optional[dict]:
                     ))),
                     ('birthDate', dict(zip(
                         field_info,
-                        ('STRING', True, 72)
+                        ('STRING', False, 72)
                     ))),
                     ('ageInYears', dict(zip(
                         field_info,
@@ -351,7 +352,7 @@ def get_gpcs_result(
         'grouperType': grouper_type,
         'grouperVersion': grouper_version
     } | (
-        {'disableHac': disable_hac} if disable_hac else dict()
+        {'disableHac': disable_hac} if disable_hac else {}
     )
     print(processing_options)
     request_list: List[dict] = [
@@ -384,7 +385,7 @@ def json_subset_to_text(
     output_format: str,
     output_file: Optional[str]
 ) -> Optional[List[str]]:
-    lines: List[str] = list()
+    lines: List[str] = []
     if output_format == 'A':
         lines = [
             ','.join([
@@ -558,14 +559,14 @@ def build_collect_list_subquery(
 def build_grouped_dataframe_query(
     table_name: str,
     group_count: int,
-    input_format: str = 'A',
+    usecase: str,
     patient_id_column: str = 'patientId'
 ):
-    fields: Dict[str, str] = dict()
+    fields: Dict[str, str] = {}
     diag_code_count: int = 0
     diag_poas: bool = False
     procedure_count: int = 0
-    if input_format == 'A':
+    if usecase == 'HRT_CaseA':
         diag_code_count = 50
         diag_poas = True
         procedure_count = 50
@@ -593,7 +594,7 @@ def build_grouped_dataframe_query(
         INNER JOIN (
           SELECT
             patientId,
-            ROUND(""" + str(group_count) + """*RAND()) AS Group_Index
+            FLOOR(""" + str(group_count) + """*RAND()) AS Group_Index
           FROM (
             SELECT
                 DISTINCT """ + patient_id_column + """ AS patientId
@@ -607,38 +608,117 @@ def build_grouped_dataframe_query(
     """
     return df_grouped_query
 
-def grouped_data_to_json(partition_data):
-    for row in partition_data:
-        request_list: List[dict] = [
+def create_grouped_dataframe(
+    spark: SparkSession,
+    input_table: str,
+    group_count: int,
+    usecase: str,
+    patient_id_column: str = 'patientId'
+) -> DataFrame:
+    query: str = build_grouped_dataframe_query(
+        table_name=input_table,
+        group_count=group_count,
+        usecase=usecase,
+        patient_id_column=patient_id_column
+    )
+    df: DataFrame = spark.sql(query)
+    return df
+
+
+def grouped_claims_to_structured_list(
+    row,
+    usecase: str
+) -> List[dict]:
+    claim_input_list: List[dict] = []
+    if usecase == 'HRC_CaseA':
+        claim_input_list = [
             {
                 'patientId': entry['patientId'],
                 'claimId': entry['claimId'],
                 'admitDate': entry['admitDate'],
                 'dischargeDate': entry['dischargeDate'],
-                'birthDate': entry['birthDate'],
-                'ageInYears': int(entry['ageInYears']),
+                'birthDate': (
+                    entry['birthDate']
+                    if len(entry['birthDate']) == 10 else None
+                ),
+                'ageInYears': (
+                    int(entry['ageInYears'])
+                    if entry['ageInYears'].isdigit() else None
+                ),
                 'sex': entry['sex'],
-                #'icdVersionQualifier': entry['icdVersionQualifier']
+                'icdVersionQualifier': entry['icdVersionQualifier'],
                 'diagnosisList': [
-                {'code': code.diagnosisCode} | (
-                    {'poa': code.diagnosisPOA}
-                    if code.diagnosisPOA else dict()
-                )
-                for code in entry['diagnosisCodes']
-                if code.diagnosisCode
+                    {'code': code.diagnosisCode} | (
+                        {'poa': code.diagnosisPOA}
+                        if code.diagnosisPOA else {}
+                    )
+                    for code in entry['diagnosisCodes']
+                    if code.diagnosisCode
                 ]
             } | (
-                {
-                'procedureList': [
+                {'procedureList': [
                     {'code': procedure}
                     for procedure in entry['procedures']
-                ]
-                }
-                if entry['procedures'] else dict()
+                ]}
+                if entry['procedures'] else {}
             ) | (
                 {'admitDiagnosis': entry['admitDiagnosis']}
-                if entry['admitDiagnosis'] else dict()
+                if entry['admitDiagnosis'] else {}
             )
             for entry in row['Data']
         ]
-        yield [json.dumps({'requestList': request_list})]
+    #yield [json.dumps({'claimInputList': claim_input_list})]
+    return claim_input_list
+
+def get_gpcs_grouped_result(
+    partition_data,
+    access_token: str,
+    usecase: str,
+    content_version: str = '2022.2.1',
+    grouper_type: str = 'APR',
+    grouper_version: str = '390',
+    disable_hac: Optional[str] = '1',
+    sub_requests: int = 1,
+    claims_per_sub_request: Optional[int] = None,
+    timeout_seconds: int = 60
+):
+    gpcs_claims_url: str = (
+        'https://gpcs.3m.com/Gpcs/rest/' + content_version + '/claims/process'
+    )
+    headers: Dict[str, str] = {
+        'Authorization': 'Bearer ' + access_token,
+        'Content-Type': 'application/json',
+        'accept': 'application/json'
+    }
+    processing_options: Dict[str, str] = {
+        'contentVersion': content_version,
+        'grouperType': grouper_type,
+        'grouperVersion': grouper_version
+    } | (
+        {'disableHac': disable_hac} if disable_hac else {}
+    )
+    for row in partition_data:
+        claim_input_list: List[dict] = grouped_claims_to_structured_list(
+            row,
+            usecase
+        )
+        request_list: List[dict] = [
+            {
+                'claimInputList': claim_input_list,
+                'processingOptions': processing_options
+            }
+        ]
+        request_body: str = json.dumps({'requestList': request_list})
+        gpcs_response = requests.post(
+            gpcs_claims_url,
+            data=request_body,
+            headers=headers,
+            timeout=timeout_seconds
+        )
+        if gpcs_response.status_code != 200:
+            raise Exception(
+                'Claims Processing Error',
+                gpcs_response.status_code,
+                gpcs_response.content
+            )
+        yield [gpcs_response.json()]
