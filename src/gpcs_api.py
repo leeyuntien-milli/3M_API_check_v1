@@ -14,8 +14,8 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.types import StringType, StructField, StructType
 
 
-def get_format_for_usecase(usecase: str) -> Optional[dict]:
-    format_dict: Optional[dict] = None
+def get_format_for_usecase(usecase: str) -> dict:
+    format_dict: dict = {}
     field_info: Tuple[str, str, str] = (
         'type',
         'nullable',
@@ -62,11 +62,11 @@ def get_format_for_usecase(usecase: str) -> Optional[dict]:
                     ))),
                     ('birthDate', dict(zip(
                         field_info,
-                        ('STRING', False, 72)
+                        ('STRING', True, 72)
                     ))),
                     ('ageInYears', dict(zip(
                         field_info,
-                        ('INT', False, 82)
+                        ('INT', True, 82)
                     ))),
                     ('sex', dict(zip(
                         field_info,
@@ -75,10 +75,6 @@ def get_format_for_usecase(usecase: str) -> Optional[dict]:
                     ('admitDiagnosis', dict(zip(
                         field_info,
                         ('STRING', True, 86)
-                    ))),
-                    ('diagnosisCode1', dict(zip(
-                        field_info,
-                        ('STRING', False, diagnosis_start)
                     )))
                 ] + [
                     ('diagnosisCode' + str(i), dict(zip(
@@ -89,7 +85,7 @@ def get_format_for_usecase(usecase: str) -> Optional[dict]:
                             diagnosis_start + diagnosis_width*(i - 1)
                         )
                     )))
-                    for i in range(2, diagnosis_code_lim)
+                    for i in range(1, diagnosis_code_lim)
                 ] + [
                     ('diagnosisPOA' + str(i), dict(zip(
                         field_info,
@@ -124,7 +120,13 @@ def get_format_for_usecase(usecase: str) -> Optional[dict]:
             'diagnosis_code_count': diagnosis_code_count,
             'diagnosis_poas': True,
             'procedure_count': procedure_count,
+            'core_fields': {
+                'claimId', 'admitDate', 'dischargeDate',
+                'dischargeStatus', 'birthDate', 'ageInYears', 'sex',
+                'admitDiagnosis', 'icdVersionQualifier'
+            },
             'date_convert_fields': {'admitDate', 'dischargeDate', 'birthDate'},
+            'periods_are_nulls': True,
             'line_final_boundary': end_start + 2
         }
     return format_dict
@@ -145,7 +147,7 @@ def convert_format_to_csv(input_file: str,
                           output_file: str,
                           usecase: str,
                           lines_chunk: int = 1024) -> None:
-    format_dict: Optional[dict] = get_format_for_usecase(usecase)
+    format_dict: dict = get_format_for_usecase(usecase)
     if not format_dict:
         print('Unknown usecase.')
         return
@@ -158,22 +160,78 @@ def convert_format_to_csv(input_file: str,
         i for i, key in enumerate(format_dict['input_fields'])
         if key in format_dict['date_convert_fields']
     }
+    #The below works, but should be refactored to be nicer.
     with open(input_file, 'r') as file_in:
         with open(output_file, 'w') as file_out:
-            while True:
-                flines = islice(file_in, lines_chunk)
-                result: List[str] = [
-                    ','.join([
-                        ('-'.join([lline[-4:], lline[:2], lline[3:5]])
-                        if i in date_convert_indices else lline)
-                        for i in range(0, blim)
-                        for lline in [line[bounds[i]:bounds[i+1]].strip()]
-                    ])
-                    for line in flines
-                ]
-                if not result:
-                    break
-                file_out.write('\n'.join(result) + '\n')
+            result: List[str] = []
+            if date_convert_indices and format_dict['periods_are_nulls']:
+                while True:
+                    flines = islice(file_in, lines_chunk)
+                    result = [
+                        ','.join([
+                            ('-'.join([lline[-4:], lline[:2], lline[3:5]])
+                            if i in date_convert_indices else lline)
+                            for i in range(0, blim)
+                            for lline in [
+                                lcheck if lcheck != '.' else ''
+                                for lcheck in [
+                                    line[bounds[i]:bounds[i+1]].strip()
+                                ]
+                            ]
+                        ])
+                        for line in flines
+                    ]
+                    if not result:
+                        break
+                    file_out.write('\n'.join(result) + '\n')
+            elif date_convert_indices:
+                while True:
+                    flines = islice(file_in, lines_chunk)
+                    result = [
+                        ','.join([
+                            ('-'.join([lline[-4:], lline[:2], lline[3:5]])
+                            if i in date_convert_indices else lline)
+                            for i in range(0, blim)
+                            for lline in [line[bounds[i]:bounds[i+1]].strip()]
+                        ])
+                        for line in flines
+                    ]
+                    if not result:
+                        break
+                    file_out.write('\n'.join(result) + '\n')
+            elif format_dict['periods_are_nulls']:
+                while True:
+                    flines = islice(file_in, lines_chunk)
+                    result = [
+                        ','.join([
+                            lline
+                            for i in range(0, blim)
+                            for lline in [
+                                lcheck if lcheck != '.' else ''
+                                for lcheck in [
+                                    line[bounds[i]:bounds[i+1]].strip()
+                                ]
+                            ]
+                        ])
+                        for line in flines
+                    ]
+                    if not result:
+                        break
+                    file_out.write('\n'.join(result) + '\n')
+            else:
+                while True:
+                    flines = islice(file_in, lines_chunk)
+                    result = [
+                        ','.join([
+                            lline
+                            for i in range(0, blim)
+                            for lline in [line[bounds[i]:bounds[i+1]].strip()]
+                        ])
+                        for line in flines
+                    ]
+                    if not result:
+                        break
+                    file_out.write('\n'.join(result) + '\n')
     return
 
 def generate_gpcs_auth_token(
@@ -380,13 +438,13 @@ def get_gpcs_result(
     return gpcs_response.json()
 
 
-def json_subset_to_text(
+def get_json_result_subset(
     json_input: dict,
-    output_format: str,
+    usecase: str,
     output_file: Optional[str]
 ) -> Optional[List[str]]:
     lines: List[str] = []
-    if output_format == 'A':
+    if usecase == 'HRT_CaseA':
         lines = [
             ','.join([
                 claim_out['fields']['patientIdUsed'],
@@ -570,15 +628,12 @@ def build_grouped_dataframe_query(
         diag_code_count = 50
         diag_poas = True
         procedure_count = 50
+        format_dict: dict = get_format_for_usecase(usecase)
+        #Fix this
         fields = {
-            'claimId': 'STRING',
-            'admitDate': 'STRING',
-            'dischargeDate': 'STRING',
-            'dischargeStatus': 'STRING',
-            'birthDate': 'STRING',
-            'ageInYears': 'INT',
-            'sex': 'STRING',
-            'admitDiagnosis': 'STRING'
+            item[0]: item[1][0]
+            for item in format_dict['input_fields']
+            if item[0] in format_dict['core_fields']
         }
     collect_query: str = build_collect_list_subquery(
         fields_dict=fields,
@@ -624,46 +679,45 @@ def create_grouped_dataframe(
     df: DataFrame = spark.sql(query)
     return df
 
-
 def grouped_claims_to_structured_list(
     row,
     usecase: str
 ) -> List[dict]:
     claim_input_list: List[dict] = []
-    if usecase == 'HRC_CaseA':
+    if usecase == 'HRT_CaseA':
         claim_input_list = [
             {
                 'patientId': entry['patientId'],
                 'claimId': entry['claimId'],
                 'admitDate': entry['admitDate'],
                 'dischargeDate': entry['dischargeDate'],
-                'birthDate': (
-                    entry['birthDate']
-                    if len(entry['birthDate']) == 10 else None
-                ),
-                'ageInYears': (
-                    int(entry['ageInYears'])
-                    if entry['ageInYears'].isdigit() else None
-                ),
                 'sex': entry['sex'],
-                'icdVersionQualifier': entry['icdVersionQualifier'],
-                'diagnosisList': [
+                'icdVersionQualifier': entry['icdVersionQualifier']
+            } | (
+                {'birthDate': entry['birthDate']}
+                if (entry['birthDate'] and
+                    (len(entry['birthDate']) == 10)) else {}
+            ) | (
+                {'ageInYears': int(entry['ageInYears'])}
+                if entry['ageInYears'] else {}
+            ) | (
+                {'admitDiagnosis': entry['admitDiagnosis']}
+                if entry['admitDiagnosis'] else {}
+            ) | (
+                {'diagnosisList': [
                     {'code': code.diagnosisCode} | (
                         {'poa': code.diagnosisPOA}
                         if code.diagnosisPOA else {}
                     )
                     for code in entry['diagnosisCodes']
-                    if code.diagnosisCode
-                ]
-            } | (
+                ]}
+                if entry['diagnosisCodes'] else {}
+            ) | (
                 {'procedureList': [
                     {'code': procedure}
                     for procedure in entry['procedures']
                 ]}
                 if entry['procedures'] else {}
-            ) | (
-                {'admitDiagnosis': entry['admitDiagnosis']}
-                if entry['admitDiagnosis'] else {}
             )
             for entry in row['Data']
         ]
@@ -721,4 +775,4 @@ def get_gpcs_grouped_result(
                 gpcs_response.status_code,
                 gpcs_response.content
             )
-        yield [gpcs_response.json()]
+        yield [json.dumps(gpcs_response.json())]
