@@ -5,7 +5,7 @@ import math
 import uuid
 from collections import OrderedDict
 from itertools import islice
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 import jwt
 import requests
 from cryptography import x509
@@ -15,7 +15,7 @@ from pyspark.sql.types import StringType, StructField, StructType
 
 
 def get_format_for_usecase(usecase: str) -> dict:
-    format_dict: dict = {}
+    format_dict: Dict[str, Any] = {}
     field_info: Tuple[str, str, str] = (
         'type',
         'nullable',
@@ -121,9 +121,9 @@ def get_format_for_usecase(usecase: str) -> dict:
             'diagnosis_poas': True,
             'procedure_count': procedure_count,
             'core_fields': {
-                'claimId', 'admitDate', 'dischargeDate',
-                'dischargeStatus', 'birthDate', 'ageInYears', 'sex',
-                'admitDiagnosis', 'icdVersionQualifier'
+                'claimId', 'admitDate', 'dischargeDate', 'dischargeStatus',
+                'birthDate', 'ageInYears', 'sex', 'admitDiagnosis',
+                'icdVersionQualifier'
             },
             'date_convert_fields': {'admitDate', 'dischargeDate', 'birthDate'},
             'periods_are_nulls': True,
@@ -147,7 +147,7 @@ def convert_format_to_csv(input_file: str,
                           output_file: str,
                           usecase: str,
                           lines_chunk: int = 1024) -> None:
-    format_dict: dict = get_format_for_usecase(usecase)
+    format_dict: Dict[str, Any] = get_format_for_usecase(usecase)
     if not format_dict:
         print('Unknown usecase.')
         return
@@ -304,7 +304,7 @@ def claims_file_to_list(input_file: str,
     claim_lines: List[str] = list()
     with open(input_file, 'r') as file_in:
         claim_lines = file_in.readlines()
-    result: List[dict] = [dict()]
+    result: List[dict] = [{}]
     if input_format == 'A':
         result = [
             {
@@ -436,35 +436,6 @@ def get_gpcs_result(
         )
 
     return gpcs_response.json()
-
-
-def get_json_result_subset(
-    json_input: dict,
-    usecase: str,
-    output_file: Optional[str]
-) -> Optional[List[str]]:
-    lines: List[str] = []
-    if usecase == 'HRT_CaseA':
-        lines = [
-            ','.join([
-                claim_out['fields']['patientIdUsed'],
-                claim_out['fields']['claimId'],
-                claim_out['fields']['drg'],
-                claim_out['fields']['returnCode'],
-                claim_out['fields']['soi'],
-                claim_out['fields']['rom']
-            ])
-            for resp in json_input['responseList']
-            for claim_out in resp['claimOutputList']
-        ]
-    result: Optional[List[str]] = None
-    if output_file:
-        with open(output_file, 'w') as file_out:
-            file_out.write('\n'.join(lines))
-    else:
-        result = lines
-    return result
-
 
 def get_gpcs_result_for_file(
     input_file: str,
@@ -631,9 +602,9 @@ def build_grouped_dataframe_query(
         format_dict: dict = get_format_for_usecase(usecase)
         #Fix this
         fields = {
-            item[0]: item[1][0]
-            for item in format_dict['input_fields']
-            if item[0] in format_dict['core_fields']
+            key: format_dict[key]['type']
+            for key in format_dict['input_fields'].keys()
+            if key in format_dict['core_fields']
         }
     collect_query: str = build_collect_list_subquery(
         fields_dict=fields,
@@ -724,6 +695,26 @@ def grouped_claims_to_structured_list(
     #yield [json.dumps({'claimInputList': claim_input_list})]
     return claim_input_list
 
+def get_json_result_subset(
+    json_input: dict,
+    usecase: str
+) -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    if usecase == 'HRT_CaseA':
+        result = [
+            {
+                'patientIdUsed': claim_out['fields']['patientIdUsed'],
+                'claimId': claim_out['fields']['claimId'],
+                'drg': claim_out['fields']['drg'],
+                'returnCode': claim_out['fields']['returnCode'],
+                'soi': claim_out['fields']['soi'],
+                'rom': claim_out['fields']['rom']
+            }
+            for resp in json_input['responseList']
+            for claim_out in resp['claimOutputList']
+        ]
+    return result
+
 def get_gpcs_grouped_result(
     partition_data,
     access_token: str,
@@ -775,4 +766,6 @@ def get_gpcs_grouped_result(
                 gpcs_response.status_code,
                 gpcs_response.content
             )
-        yield [json.dumps(gpcs_response.json())]
+        result = get_json_result_subset(gpcs_response.json(), usecase)
+        #yield [json.dumps(gpcs_response.json())]
+        yield [result]
