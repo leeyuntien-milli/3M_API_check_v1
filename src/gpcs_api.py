@@ -23,6 +23,10 @@ def get_format_for_usecase(usecase: str) -> dict:
         'nullable',
         'text_left_col'
     )
+    sfield_info: Tuple[str, str] = (
+        'type',
+        'nullable'
+    )
     string_str: str = 'STRING'
     int_str: str = 'INT'
     double_str: str = 'DOUBLE'
@@ -346,8 +350,70 @@ def get_format_for_usecase(usecase: str) -> dict:
                         )
                     )))
                     for i in range(1, item_lim)
+                ] + [
+                    ('patientId', dict(zip(
+                        field_info,
+                        (string_str, False, 20709)
+                    ))),
+                    ('typeOfBill', dict(zip(
+                        field_info,
+                        (string_str, True, 20721)
+                    ))),
+                    ('reasonForVisitDiagnosis', dict(zip(
+                        field_info,
+                        (string_str, True, 20725)
+                    ))),
+                    ('itemPlaceOfService', dict(zip(
+                        field_info,
+                        (string_str, True, 20732)
+                    ))),
+                    ('userKey2', dict(zip(
+                        field_info,
+                        (string_str, True, 20734)
+                    ))),
+                    ('userKey1', dict(zip(
+                        field_info,
+                        (string_str, True, 20745)
+                    ))),
+                    ('icdVersionQualifier', dict(zip(
+                        field_info,
+                        (string_str, False, 20759)
+                    )))
                 ]
-            )
+            ),
+            'schedule_format_dict': OrderedDict([
+                ('userKey1', dict(zip(
+                    sfield_info,
+                    (string_str, True)
+                ))),
+               ('userKey2', dict(zip(
+                    sfield_info,
+                    (string_str, True)
+                ))), 
+                ('BEGIN_DATE', dict(zip(
+                    sfield_info,
+                    (string_str, False)
+                ))),
+                ('END_DATE', dict(zip(
+                    sfield_info,
+                    (string_str, False)
+                ))),
+                ('KEYED_BY', dict(zip(
+                    sfield_info,
+                    (string_str, False)
+                )))
+            ]),
+            'diagnosis_code_count': diagnosis_code_count,
+            'diagnosis_poas': False,
+            'procedure_count': 0,
+            'core_fields': {
+                'claimId', 'admitDate', 'dischargeDate', 'sex', 'birthDate',
+                'typeOfBill', 'reasonForVisitDiagnosis', 'itemPlaceOfService',
+                'icdVersionQualifier'
+            },
+            'date_convert_fields': {'admitDate', 'dischargeDate', 'birthDate'},
+            'periods_are_nulls': False,
+            'line_final_boundary': 20760
         }
 
     return format_dict
