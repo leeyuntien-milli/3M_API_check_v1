@@ -10,7 +10,9 @@ import jwt
 import requests
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
+from pyspark import RDD
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.functions import explode
 from pyspark.sql.types import StringType, StructField, StructType
 
 
@@ -21,11 +23,18 @@ def get_format_for_usecase(usecase: str) -> dict:
         'nullable',
         'text_left_col'
     )
+    string_str: str = 'STRING'
+    int_str: str = 'INT'
+    double_str: str = 'DOUBLE'
+    diagnosis_code_count: int = 0
+    diagnosis_code_lim: int = 0
+    diagnosis_width: int = 0
+    diagnosis_start: int = 0
     if usecase == 'HRT_CaseA':
-        diagnosis_code_count: int = 50
-        diagnosis_code_lim: int = diagnosis_code_count + 1
-        diagnosis_width: int = 8
-        diagnosis_start: int = 94
+        diagnosis_code_count = 50
+        diagnosis_code_lim = diagnosis_code_count + 1
+        diagnosis_width = 8
+        diagnosis_start = 94
         diagnosis_poa_width: int = 1
         diagnosis_poa_start: int = (
             diagnosis_start + diagnosis_width*diagnosis_code_count
@@ -42,45 +51,45 @@ def get_format_for_usecase(usecase: str) -> dict:
                 [
                     ('patientId', dict(zip(
                         field_info,
-                        ('STRING', False, 0)
+                        (string_str, False, 0)
                     ))),
                     ('claimId', dict(zip(
                         field_info,
-                        ('STRING', False, 40)
+                        (string_str, False, 40)
                     ))),
                     ('admitDate', dict(zip(
                         field_info,
-                        ('STRING', False, 50)
+                        (string_str, False, 50)
                     ))),
                     ('dischargeDate', dict(zip(
                         field_info,
-                        ('STRING', False, 60)
+                        (string_str, False, 60)
                     ))),
                     ('dischargeStatus', dict(zip(
                         field_info,
-                        ('STRING', True, 70)
+                        (string_str, True, 70)
                     ))),
                     ('birthDate', dict(zip(
                         field_info,
-                        ('STRING', True, 72)
+                        (string_str, True, 72)
                     ))),
                     ('ageInYears', dict(zip(
                         field_info,
-                        ('INT', True, 82)
+                        (int_str, True, 82)
                     ))),
                     ('sex', dict(zip(
                         field_info,
-                        ('STRING', False, 85)
+                        (string_str, False, 85)
                     ))),
                     ('admitDiagnosis', dict(zip(
                         field_info,
-                        ('STRING', True, 86)
+                        (string_str, True, 86)
                     )))
                 ] + [
                     ('diagnosisCode' + str(i), dict(zip(
                         field_info,
                         (
-                            'STRING',
+                            string_str,
                             True,
                             diagnosis_start + diagnosis_width*(i - 1)
                         )
@@ -90,7 +99,7 @@ def get_format_for_usecase(usecase: str) -> dict:
                     ('diagnosisPOA' + str(i), dict(zip(
                         field_info,
                         (
-                            'STRING',
+                            string_str,
                             True,
                             diagnosis_poa_start + diagnosis_poa_width*(i - 1)
                         )
@@ -100,7 +109,7 @@ def get_format_for_usecase(usecase: str) -> dict:
                     ('procedure' + str(i), dict(zip(
                         field_info,
                         (
-                            'STRING',
+                            string_str,
                             True,
                             procedure_start + procedure_width*(i - 1)
                         )
@@ -109,11 +118,11 @@ def get_format_for_usecase(usecase: str) -> dict:
                 ] + [
                     ('disableHac', dict(zip(
                         field_info,
-                        ('STRING', False, end_start)
+                        (string_str, False, end_start)
                     ))),
                     ('icdVersionQualifier', dict(zip(
                         field_info,
-                        ('STRING', False, end_start + 1)
+                        (string_str, False, end_start + 1)
                     )))
                 ]
             ),
@@ -127,8 +136,220 @@ def get_format_for_usecase(usecase: str) -> dict:
             },
             'date_convert_fields': {'admitDate', 'dischargeDate', 'birthDate'},
             'periods_are_nulls': True,
-            'line_final_boundary': end_start + 2
+            'line_final_boundary': end_start + 2,
+            'response_fields': OrderedDict([
+                ('patientIdUsed', string_str),
+                ('claimId', string_str),
+                ('drg', string_str),
+                ('drgDescription', string_str),
+                ('returnCode', string_str),
+                ('soi', string_str),
+                ('soiDescription', string_str),
+                ('rom', string_str),
+                ('romDescription', string_str),
+                ('admitDrg', string_str),
+                ('admitDrgDescription', string_str),
+                ('admitMdc', string_str),
+                ('admitMdcDescription', string_str),
+                ('admitMedicalSurgicalDrgFlag', string_str),
+                ('admitReturnCode', string_str),
+                ('admitRom', string_str),
+                ('admitRomDescription', string_str),
+                ('admitSoi', string_str),
+                ('admitSoiDescription', string_str),
+                ('icuIntensityMarker', string_str),
+                ('los', int_str),
+                ('mdc', string_str),
+                ('mdcDescription', string_str),
+                ('medicalSurgicalDrgFlag', string_str),
+                ('prePostPaymentErrors', string_str),
+                ('proceduresUsedCount', int_str),
+                ('secondaryDiagnosesUsedCount', string_str)
+            ])
         }
+    elif usecase == 'Chicago_CaseA':
+        diagnosis_code_count = 25
+        diagnosis_code_lim = diagnosis_code_count + 1
+        diagnosis_width = 7
+        item_count: int = 427
+        item_lim: int = item_count + 1
+        item_procedure_start: int = 213
+        item_procedure_width: int = 6
+        item_modifier_width: int = 2
+        item_modifier1_start: int = (
+            item_procedure_start + item_procedure_width*item_count
+        )
+        item_modifier2_start: int = (
+            item_modifier1_start + item_modifier_width*item_count
+        )
+        item_modifier3_start: int = (
+            item_modifier2_start + item_modifier_width*item_count
+        )
+        item_modifier4_start: int = (
+            item_modifier3_start + item_modifier_width*item_count
+        )
+        item_revenue_code_start: int = (
+            item_modifier4_start + item_modifier_width*item_count
+        )
+        item_revenue_code_width: int = 4
+        item_units_of_service_start: int = (
+            item_revenue_code_start + item_revenue_code_width*item_count
+        )
+        item_units_of_service_width: int = 8
+        item_service_date_start: int = (
+            item_units_of_service_start + item_units_of_service_width*item_count
+        )
+        item_service_date_width: int = 8
+        item_ndc_start: int = (
+            item_service_date_start + item_service_date_width*item_count
+        )
+        item_ndc_width: int = 11
+        item_billing_note_start: int = (
+            item_ndc_start + item_ndc_width*item_count
+        )
+        item_billing_note_width: int = 3
+        format_dict = {
+            'input_fields': OrderedDict(
+                [
+                    ('claimId', dict(zip(
+                        field_info,
+                        (string_str, False, 0)
+                    ))),
+                    ('admitDate', dict(zip(
+                        field_info,
+                        (string_str, False, 13)
+                    ))),
+                    ('dischargeDate', dict(zip(
+                        field_info,
+                        (string_str, False, 21)
+                    ))),
+                    ('sex', dict(zip(
+                        field_info,
+                        (string_str, False, 29)
+                    ))),
+                    ('birthDate', dict(zip(
+                        field_info,
+                        (string_str, True, 30)
+                    )))
+                ] + [
+                    ('diagnosisCode' + str(i), dict(zip(
+                        field_info,
+                        (
+                            string_str,
+                            True,
+                            diagnosis_start + diagnosis_width*(i - 1)
+                        )
+                    )))
+                    for i in range(1, diagnosis_code_lim)
+                ] + [
+                    ('itemProcedure' + str(i), dict(zip(
+                        field_info,
+                        (
+                            string_str,
+                            True,
+                            item_procedure_start + item_procedure_width*(i - 1)
+                        )
+                    )))
+                    for i in range(1, item_lim)
+                ] + [
+                    ('itemModifier1_' + str(i), dict(zip(
+                        field_info,
+                        (
+                            string_str,
+                            True,
+                            item_modifier1_start + item_modifier_width*(i - 1)
+                        )
+                    )))
+                    for i in range(1, item_lim)
+                ] + [
+                    ('itemModifier2_' + str(i), dict(zip(
+                        field_info,
+                        (
+                            string_str,
+                            True,
+                            item_modifier2_start + item_modifier_width*(i - 1)
+                        )
+                    )))
+                    for i in range(1, item_lim)
+                ] + [
+                    ('itemModifier3_' + str(i), dict(zip(
+                        field_info,
+                        (
+                            string_str,
+                            True,
+                            item_modifier3_start + item_modifier_width*(i - 1)
+                        )
+                    )))
+                    for i in range(1, item_lim)
+                ] + [
+                    ('itemModifier4_' + str(i), dict(zip(
+                        field_info,
+                        (
+                            string_str,
+                            True,
+                            item_modifier4_start + item_modifier_width*(i - 1)
+                        )
+                    )))
+                    for i in range(1, item_lim)
+                ] + [
+                    ('itemRevenueCode' + str(i), dict(zip(
+                        field_info,
+                        (
+                            string_str,
+                            True,
+                            (item_revenue_code_start +
+                             item_revenue_code_width*(i - 1))
+                        )
+                    )))
+                    for i in range(1, item_lim)
+                ] + [
+                    ('itemUnitsOfService' + str(i), dict(zip(
+                        field_info,
+                        (
+                            double_str,
+                            True,
+                            (item_units_of_service_start +
+                             item_units_of_service_width*(i - 1))
+                        )
+                    )))
+                    for i in range(1, item_lim)
+                ] + [
+                    ('itemServiceDate' + str(i), dict(zip(
+                        field_info,
+                        (
+                            string_str,
+                            True,
+                            (item_service_date_start +
+                             item_service_date_width*(i - 1))
+                        )
+                    )))
+                    for i in range(1, item_lim)
+                ] + [
+                    ('itemNdc' + str(i), dict(zip(
+                        field_info,
+                        (
+                            string_str,
+                            True,
+                            (item_ndc_start +
+                             item_ndc_width*(i - 1))
+                        )
+                    )))
+                    for i in range(1, item_lim)
+                ] + [
+                    ('itemBillingNote' + str(i), dict(zip(
+                        field_info,
+                        (
+                            string_str,
+                            True,
+                            (item_billing_note_start +
+                             item_billing_note_width*(i - 1))
+                        )
+                    )))
+                    for i in range(1, item_lim)
+                ]
+            )
+        }
+
     return format_dict
 
 def get_schema_for_usecase(usecase: str) -> Optional[StructType]:
@@ -602,7 +823,7 @@ def build_grouped_dataframe_query(
         format_dict: dict = get_format_for_usecase(usecase)
         #Fix this
         fields = {
-            key: format_dict[key]['type']
+            key: format_dict['input_fields'][key]['type']
             for key in format_dict['input_fields'].keys()
             if key in format_dict['core_fields']
         }
@@ -697,25 +918,20 @@ def grouped_claims_to_structured_list(
 
 def get_json_result_subset(
     json_input: dict,
-    usecase: str
+    response_fields: Tuple[str, ...]
 ) -> List[Dict[str, Any]]:
-    result: List[Dict[str, Any]] = []
-    if usecase == 'HRT_CaseA':
-        result = [
-            {
-                'patientIdUsed': claim_out['fields']['patientIdUsed'],
-                'claimId': claim_out['fields']['claimId'],
-                'drg': claim_out['fields']['drg'],
-                'returnCode': claim_out['fields']['returnCode'],
-                'soi': claim_out['fields']['soi'],
-                'rom': claim_out['fields']['rom']
-            }
-            for resp in json_input['responseList']
-            for claim_out in resp['claimOutputList']
-        ]
+    result: List[Dict[str, Any]] = [
+        {
+            fname: fields.get(fname)
+            for fname in response_fields
+        }
+        for resp in json_input['responseList']
+        for claim_out in resp['claimOutputList']
+        for fields in [claim_out['fields']]
+    ]
     return result
 
-def get_gpcs_grouped_result(
+def get_gpcs_result_for_partition(
     partition_data,
     access_token: str,
     usecase: str,
@@ -742,6 +958,10 @@ def get_gpcs_grouped_result(
     } | (
         {'disableHac': disable_hac} if disable_hac else {}
     )
+    format_dict: Dict[str, Any] = get_format_for_usecase(usecase)
+    response_field_names: Tuple[str, ...] = (
+        tuple((format_dict['response_fields']).keys())
+    )
     for row in partition_data:
         claim_input_list: List[dict] = grouped_claims_to_structured_list(
             row,
@@ -766,6 +986,45 @@ def get_gpcs_grouped_result(
                 gpcs_response.status_code,
                 gpcs_response.content
             )
-        result = get_json_result_subset(gpcs_response.json(), usecase)
+        result = get_json_result_subset(
+            gpcs_response.json(),
+            response_field_names
+        )
         #yield [json.dumps(gpcs_response.json())]
         yield [result]
+
+def postprocess_grouped_result(
+    result_dataframe: DataFrame,
+    usecase: str
+) -> DataFrame:
+    format_dict: Dict[str, Any] = get_format_for_usecase(usecase)
+    col_list: List[str] = [
+        'col.' + key
+        for key in format_dict['response_fields'].keys()
+    ]
+    df_final = (
+        result_dataframe.select(explode(result_dataframe.Data))
+    ).select(col_list)
+    return df_final
+
+def get_gpcs_result_for_grouped_data(
+    spark: SparkSession,
+    grouped_dataframe: DataFrame,
+    access_token: str,
+    usecase: str,
+    new_partitions: Optional[int] = None
+) -> DataFrame:
+    df_in: DataFrame = (
+        grouped_dataframe.repartition(new_partitions)
+    ) if new_partitions else (
+        grouped_dataframe
+    )
+    result_rdd: RDD = df_in.rdd.mapPartitions(
+        lambda x: get_gpcs_result_for_partition(x, access_token, usecase)
+    )
+    result_df: DataFrame = spark.createDataFrame(result_rdd).toDF("Data")
+    final_df: DataFrame = postprocess_grouped_result(result_df, usecase)
+    return final_df
+
+
+
