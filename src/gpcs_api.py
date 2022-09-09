@@ -2,6 +2,7 @@ import base64
 import datetime
 import json
 import math
+from re import S
 import uuid
 from collections import OrderedDict
 from itertools import islice
@@ -16,26 +17,32 @@ from pyspark.sql.functions import explode
 from pyspark.sql.types import StringType, StructField, StructType
 
 
-def get_format_for_usecase(usecase: str) -> dict:
+def get_format_for_usecase(usecase: str,
+                           diagnosis_code_count: Optional[int] = None,
+                           procedure_count: Optional[int] = None,
+                           item_count: Optional[int] = None) -> dict:
     format_dict: Dict[str, Any] = {}
     field_info: Tuple[str, str, str] = (
         'type',
         'nullable',
         'text_left_col'
     )
-    sfield_info: Tuple[str, str] = (
+    sfield_info: Tuple[str, str, str] = (
         'type',
-        'nullable'
+        'nullable',
+        'schedule_part'
     )
-    string_str: str = 'STRING'
-    int_str: str = 'INT'
+    boolean_str: str = 'BOOLEAN'
     double_str: str = 'DOUBLE'
-    diagnosis_code_count: int = 0
+    int_str: str = 'INT'
+    string_str: str = 'STRING'
     diagnosis_code_lim: int = 0
     diagnosis_width: int = 0
     diagnosis_start: int = 0
     if usecase == 'HRT_CaseA':
-        diagnosis_code_count = 50
+        diagnosis_code_count = (
+            50 if not diagnosis_code_count else diagnosis_code_count
+        )
         diagnosis_code_lim = diagnosis_code_count + 1
         diagnosis_width = 8
         diagnosis_start = 94
@@ -43,7 +50,7 @@ def get_format_for_usecase(usecase: str) -> dict:
         diagnosis_poa_start: int = (
             diagnosis_start + diagnosis_width*diagnosis_code_count
         )
-        procedure_count: int = 50
+        procedure_count = 50 if not procedure_count else procedure_count
         procedure_lim: int = procedure_count + 1
         procedure_width: int = 7
         procedure_start: int = (
@@ -133,6 +140,7 @@ def get_format_for_usecase(usecase: str) -> dict:
             'diagnosis_code_count': diagnosis_code_count,
             'diagnosis_poas': True,
             'procedure_count': procedure_count,
+            'item_count': 0,
             'core_fields': {
                 'claimId', 'admitDate', 'dischargeDate', 'dischargeStatus',
                 'birthDate', 'ageInYears', 'sex', 'admitDiagnosis',
@@ -172,10 +180,33 @@ def get_format_for_usecase(usecase: str) -> dict:
             ])
         }
     elif usecase == 'Chicago_CaseA':
-        diagnosis_code_count = 25
+        common_str: str = 'common'
+        grouper_eapgs_str: str = 'grouper_eapgs'
+        reimbursement_wi_medicaid_eapgs_str: str = (
+            'reimbursement_wi_medicaid_eapgs'
+        )
+        string_required_common: Dict[str, Any] = dict(zip(
+            sfield_info,
+            (string_str, True, common_str)
+        ))
+        string_nullable_reimbursement: Dict[str, Any] = dict(zip(
+            sfield_info,
+            (string_str, True, reimbursement_wi_medicaid_eapgs_str)
+        ))
+        double_nullable_reimbursement: Dict[str, Any] = dict(zip(
+            sfield_info,
+            (double_str, True, reimbursement_wi_medicaid_eapgs_str)
+        ))
+        string_nullable_grouper: Dict[str, Any] = dict(zip(
+            sfield_info,
+            (string_str, True, grouper_eapgs_str)
+        ))
+        diagnosis_code_count = (
+            25 if not diagnosis_code_count else diagnosis_code_count
+        )
         diagnosis_code_lim = diagnosis_code_count + 1
         diagnosis_width = 7
-        item_count: int = 427
+        item_count = 427 if not item_count else item_count
         item_lim: int = item_count + 1
         item_procedure_start: int = 213
         item_procedure_width: int = 6
@@ -384,35 +415,88 @@ def get_format_for_usecase(usecase: str) -> dict:
             'schedule_format_dict': OrderedDict([
                 ('userKey1', dict(zip(
                     sfield_info,
-                    (string_str, True)
+                    (string_str, True, None)
                 ))),
                ('userKey2', dict(zip(
                     sfield_info,
-                    (string_str, True)
-                ))), 
-                ('BEGIN_DATE', dict(zip(
-                    sfield_info,
-                    (string_str, False)
+                    (string_str, True, None)
                 ))),
-                ('END_DATE', dict(zip(
+                ('BEGIN_DATE', string_required_common),
+                ('END_DATE', string_required_common),
+                ('reimbursementScheme', dict(zip(
                     sfield_info,
-                    (string_str, False)
+                    (string_str, True, None)
                 ))),
-                ('KEYED_BY', dict(zip(
+                ('KEYED_BY', string_required_common),
+                ('grouperVersion', dict(zip(
                     sfield_info,
-                    (string_str, False)
-                )))
+                    (string_str, True, None)
+                ))),
+                ('DESCRIPTION', dict(zip(
+                    sfield_info,
+                    (string_str, True, common_str)
+                ))),
+                ('AUTO_DETERMINED_GROUPER_SETTING', dict(zip(
+                    sfield_info,
+                    (boolean_str, True, reimbursement_wi_medicaid_eapgs_str)
+                ))),
+                ('AUTO_DETERMINED_REIMBURSEMENT_SETTING', dict(zip(
+                    sfield_info,
+                    (boolean_str, True, reimbursement_wi_medicaid_eapgs_str)
+                ))),
+                ('EAPGSWIMCAID_BASE_RATE', double_nullable_reimbursement),
+                ('EAPGSWIMCAID_STATISTICS', string_nullable_reimbursement),
+                ('EAPGSWIMCAID_FEES', string_nullable_reimbursement),
+                ('EAPGSWIMCAID_AGENCY_EFFECTIVE_DATE',
+                 string_nullable_reimbursement),
+                ('EAPGSWIMCAID_USER_DEFINED_ADJUSTMENT_FACTOR', 
+                 double_nullable_reimbursement),
+                ('EAPGSWIMCAID_ACCESS_PAYMENT', double_nullable_reimbursement),
+                ('EAPGSWIMCAID_P4P_ADJUSTMENT', double_nullable_reimbursement),
+                ('EAPGS_GRPR_VISITS_PER_CLAIM', string_nullable_grouper),
+                ('EAPGS_GRPR_DIRECT_ADMIT_OBSERVATION',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_SAME_SIGNIFICANT_PROCEDURE_CONSOLIDATION',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_CLINICAL_SIGNIFICANT_PROCEDURE_CONSOLIDATION',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_MULTIPLE_SIGNIFICANT_PROCEDURE_DISCOUNTING',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_REPEAT_ANCILLARY_PROCEDURE_DISCOUNTING',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_BILATERAL_DISCOUNTING', string_nullable_grouper),
+                ('EAPGS_GRPR_TERMINATED_PROCEDURE_DISCOUNTING',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_IGNORE_ALL_MODIFIERS', string_nullable_grouper),
+                ('EAPGS_GRPR_USE_MODIFIER_25', string_nullable_grouper),
+                ('EAPGS_GRPR_USE_MODIFIER_27', string_nullable_grouper),
+                ('EAPGS_GRPR_USE_MODIFIER_59', string_nullable_grouper),
+                ('EAPGS_GRPR_USE_THERAPY_MODIFIERS', string_nullable_grouper),
+                ('EAPGS_GRPR_PER_DIEM_INDIRECT_OPTION',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_PER_DIEM_DIRECT_OPTION', string_nullable_grouper),
+                ('EAPGS_GRPR_ADDITIONAL_INPATIENT_CODES',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_NEVER_PAY_CODES', string_nullable_grouper),
+                ('EAPGS_GRPR_NEVER_PAY_EAPGS', string_nullable_grouper),
+                (('EAPGS_GRPR_SAME_SIGNIFICANT_PROCEDURE'
+                  '_CONSOLIDATION_EXCLUSION_EAPGS'),
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_ADD_PACKAGED_EAPGS', string_nullable_grouper),
+                ('EAPGS_GRPR_DELETE_PACKAGED_EAPGS', string_nullable_grouper),
+                ('EAPGS_GRPR_PAYER_EXCEPTIONS', string_nullable_grouper)
             ]),
             'diagnosis_code_count': diagnosis_code_count,
             'diagnosis_poas': False,
             'procedure_count': 0,
+            'item_count': item_count,
             'core_fields': {
                 'claimId', 'admitDate', 'dischargeDate', 'sex', 'birthDate',
                 'typeOfBill', 'reasonForVisitDiagnosis', 'itemPlaceOfService',
                 'icdVersionQualifier'
             },
             'date_convert_fields': {'admitDate', 'dischargeDate', 'birthDate'},
-            'periods_are_nulls': False,
+            'periods_are_nulls': True,
             'line_final_boundary': 20760
         }
 
