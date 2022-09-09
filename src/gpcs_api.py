@@ -185,6 +185,7 @@ def get_format_for_usecase(usecase: str,
         reimbursement_wi_medicaid_eapgs_str: str = (
             'reimbursement_wi_medicaid_eapgs'
         )
+        processing_options_str: str = 'processing_options'
         string_required_common: Dict[str, Any] = dict(zip(
             sfield_info,
             (string_str, True, common_str)
@@ -200,6 +201,14 @@ def get_format_for_usecase(usecase: str,
         string_nullable_grouper: Dict[str, Any] = dict(zip(
             sfield_info,
             (string_str, True, grouper_eapgs_str)
+        ))
+        string_nullable_options: Dict[str, Any] = dict(zip(
+            sfield_info,
+            (string_str, True, processing_options_str)
+        ))
+        string_nullable_unused: Dict[str, Any] = dict(zip(
+            sfield_info,
+            (string_str, True, None)
         ))
         diagnosis_code_count = (
             25 if not diagnosis_code_count else diagnosis_code_count
@@ -413,29 +422,30 @@ def get_format_for_usecase(usecase: str,
                 ]
             ),
             'schedule_format_dict': OrderedDict([
-                ('userKey1', dict(zip(
-                    sfield_info,
-                    (string_str, True, None)
-                ))),
-               ('userKey2', dict(zip(
-                    sfield_info,
-                    (string_str, True, None)
-                ))),
+                ('userKey1', string_nullable_unused),
+                ('userKey2', string_nullable_unused),
                 ('BEGIN_DATE', string_required_common),
                 ('END_DATE', string_required_common),
-                ('reimbursementScheme', dict(zip(
-                    sfield_info,
-                    (string_str, True, None)
-                ))),
+                ('reimbursementScheme', string_nullable_unused),
                 ('KEYED_BY', string_required_common),
                 ('grouperVersion', dict(zip(
                     sfield_info,
-                    (string_str, True, None)
+                    string_nullable_options
                 ))),
                 ('DESCRIPTION', dict(zip(
                     sfield_info,
                     (string_str, True, common_str)
                 ))),
+                ('statsFeesOnly', string_nullable_unused),
+                ('ppcVersion', dict(zip(
+                    sfield_info,
+                    string_nullable_options
+                ))),
+                ('modifiedDate', string_nullable_unused),
+                ('medicalNecessityEditor', string_nullable_unused),
+                ('medicalNecessityInsuranceId', string_nullable_unused),
+                ('medicalNecessityEditor', string_nullable_unused),
+                ('defaultsDate', string_nullable_unused),
                 ('AUTO_DETERMINED_GROUPER_SETTING', dict(zip(
                     sfield_info,
                     (boolean_str, True, reimbursement_wi_medicaid_eapgs_str)
@@ -484,7 +494,82 @@ def get_format_for_usecase(usecase: str,
                  string_nullable_grouper),
                 ('EAPGS_GRPR_ADD_PACKAGED_EAPGS', string_nullable_grouper),
                 ('EAPGS_GRPR_DELETE_PACKAGED_EAPGS', string_nullable_grouper),
-                ('EAPGS_GRPR_PAYER_EXCEPTIONS', string_nullable_grouper)
+                ('EAPGS_GRPR_ALLOW_MEDICAL_VISIT_WITH_SPT_EAPGS',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_USE_ANATOMICAL_MODIFIERS',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_REPEAT_ANCILLARY_DISCOUNTING_FOR_DRUG',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_REPEAT_ANCILLARY_DISCOUNTING_FOR_DME',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_SINGLE_VISIT_PER_CLAIM_REVENUE_CODES',
+                 string_nullable_grouper),
+                (('EAPGS_GRPR_SAME_PHYSICAL_THERAPY_'
+                  'REHABILITATION_CONSOLIDATION'),
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_SAME_MENTAL_HEALTH_COUNSELING_CONSOLIDATION',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_SAME_DENTAL_CONSOLIDATION',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_SAME_RADIOLOGIC_PROCEDURE_CONSOLIDATION',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_SAME_RADIOLOGIC_PROCEDURE_CONSOLIDATION',
+                 string_nullable_grouper),
+                (('EAPGS_GRPR_CLINICAL_PHYSICAL_'
+                  'THERAPY_REHABILITATION_CONSOLIDATION'),
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_CLINICAL_MENTAL_HEALTH_COUNSELING_CONSOLIDATION',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_CLINICAL_DENTAL_CONSOLIDATION',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_CLINICAL_RADIOLOGIC_PROCEDURE_CONSOLIDATION',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_CLINICAL_OTHER_DIAGNOSTIC_PROCEDURE_CONSOLIDATION',
+                 string_nullable_grouper),
+                (('EAPGS_GRPR_MULTIPLE_PHYSICAL_THERAPY_'
+                  'REHABILITATION_DISCOUNTING'),
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_MULTIPLE_MENTAL_HEALTH_COUNSELING_DISCOUNTING',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_MULTIPLE_DENTAL_DISCOUNTING',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_MULTIPLE_RADIOLOGIC_PROCEDURE_DISCOUNTING',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_MULTIPLE_OTHER_DIAGNOSTIC_PROCEDURE_DISCOUNTING',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_PROCESS_MEDICAL_VISIT_WITH_SIGNIFICANT_PROCEDURE',
+                 string_nullable_grouper),
+                (('EAPGS_GRPR_PROCESS_MEDICAL_VISIT_WITH_PHYSICAL_'
+                  'THERAPY_REHABILITATION_PROCEDURE'),
+                 string_nullable_grouper),
+                (('EAPGS_GRPR_PROCESS_MEDICAL_VISIT_WITH_'
+                  'MENTAL_HEALTH_COUNSELING_PROCEDURE'),
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_PROCESS_MEDICAL_VISIT_WITH_DENTAL_PROCEDURE',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_PROCESS_MEDICAL_VISIT_WITH_RADIOLOGIC_PROCEDURE',
+                 string_nullable_grouper),
+                (('EAPGS_GRPR_PROCESS_MEDICAL_VISIT_'
+                  'WITH_OTHER_DIAGNOSTIC_PROCEDURE'),
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_ACUITY_EAPGS', string_nullable_grouper),
+                ('EAPGS_GRPR_ACUITY_SECONDARY_DIAGNOSIS_CODES',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_USE_NEVER_EVENT_MODIFIERS_PA_PB_PC',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_OBSERVATION_HOURS_OPTION',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_CROSS_TYPE_MULTIPLE_DISCOUNTING',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_RADIOLOGY_PROCEDURE_PACKAGING',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_USER_DEFINED_340B_DRUG_LIST',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_USE_MODIFIER_57', string_nullable_grouper),
+                ('EAPGS_GRPR_USE_DISTINCT_PROCEDURE_MODIFIERS',
+                 string_nullable_grouper),
+                ('EAPGS_GRPR_CONDITIONAL_EAPG_DIAGNOSIS_REQUIRED_LIST',
+                 string_nullable_grouper),
             ]),
             'diagnosis_code_count': diagnosis_code_count,
             'diagnosis_poas': False,
